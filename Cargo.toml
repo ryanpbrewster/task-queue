@@ -1,0 +1,11 @@
+[package]
+name = "task-queue"
+version = "0.1.0"
+authors = ["Ryan P. Brewster <RyanPBrewster@gmail.com>"]
+
+[dependencies]
+tempfile = "3.0.2"
+
+[[bin]]
+name = "tq"
+path = "src/bin/main.rs"
