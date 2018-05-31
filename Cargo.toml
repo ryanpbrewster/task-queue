@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Ryan P. Brewster <RyanPBrewster@gmail.com>"]
 
 [dependencies]
+actix = "0.5.7"
 tempfile = "3.0.2"
 
 [[bin]]

@@ -22,12 +22,17 @@ impl Task {
     }
 
     pub fn run(&mut self) {
-        for input in self.inputs.keys() {
-            Command::new(&self.command[0])
+        for (input, state) in self.inputs.iter_mut() {
+            *state = TaskState::STARTED;
+            let result = Command::new(&self.command[0])
                 .args(&self.command[1..])
                 .arg(input)
-                .spawn()
-                .expect("tried running command");
+                .spawn();
+            *state = if result.is_ok() {
+                TaskState::SUCCEEDED
+            } else {
+                TaskState::FAILED
+            };
         }
     }
 }
