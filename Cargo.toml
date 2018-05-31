@@ -5,6 +5,7 @@ authors = ["Ryan P. Brewster <RyanPBrewster@gmail.com>"]
 
 [dependencies]
 actix = "0.5.7"
+futures = "0.1.21"
 tempfile = "3.0.2"
 
 [[bin]]
