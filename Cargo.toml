@@ -4,10 +4,10 @@ version = "0.1.0"
 authors = ["Ryan P. Brewster <RyanPBrewster@gmail.com>"]
 
 [dependencies]
-actix = "0.5.7"
-futures = "0.1.21"
-tempfile = "3.0.2"
+chrono = "0.4"
+rusqlite = { version = "0.13", features = ["chrono"] }
+structopt = "0.2"
 
 [[bin]]
-name = "tq"
-path = "src/bin/main.rs"
+name = "rpb"
+path = "src/bin/rpb.rs"
