@@ -11,6 +11,38 @@ pub struct TaskQueue {
     conn: Connection,
 }
 
+pub struct Task {
+    id: i64,
+    create_time: DateTime<Utc>,
+    command: String,
+}
+
+impl Task {
+    const INIT_STATEMENT: &'static str = "
+        CREATE TABLE IF NOT EXISTS tasks (
+            id              INTEGER PRIMARY KEY,
+            create_time     TEXT NOT NULL,
+            command         TEXT NOT NULL
+        )";
+}
+
+pub struct TaskInput {
+    id: i64,
+    task_id: i64,
+    state: InputState,
+    value: String,
+}
+
+impl TaskInput {
+    const INIT_STATEMENT: &'static str = "
+        CREATE TABLE IF NOT EXISTS inputs (
+            id              INTEGER PRIMARY KEY,
+            task_id         INTEGER,
+            value           TEXT NOT NULL,
+            state           TEXT NOT NULL
+        )";
+}
+
 #[derive(Debug)]
 enum InputState {
     New,
@@ -64,25 +96,13 @@ impl FromSql for InputState {
 
 impl TaskQueue {
     pub fn new() -> Result<TaskQueue, Error> {
-        Connection::open("file:rpb.sqlite").map(|conn| TaskQueue { conn })
+        let tq = Connection::open("file:rpb.sqlite").map(|conn| TaskQueue { conn })?;
+        tq.conn.execute(Task::INIT_STATEMENT, &[])?;
+        tq.conn.execute(TaskInput::INIT_STATEMENT, &[])?;
+        Ok(tq)
     }
 
     pub fn push_task(&mut self, command: String, inputs: Vec<String>) -> Result<(), Error> {
-        self.conn.execute_batch(
-            "
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id              INTEGER PRIMARY KEY,
-                    create_time     TEXT NOT NULL,
-                    command         TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS inputs (
-                    id              INTEGER PRIMARY KEY,
-                    task_id         INTEGER,
-                    value           TEXT NOT NULL,
-                    state           TEXT NOT NULL
-                );",
-        )?;
-
         let now = Utc::now();
         self.conn.execute(
             "INSERT INTO tasks (create_time, command) VALUES (?1, ?2)",
