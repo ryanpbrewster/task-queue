@@ -8,7 +8,7 @@ use std::io::BufRead;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
-#[structopt(name = "rpb", about = "Interact with your local task queue.")]
+#[structopt(name = "tq", about = "Interact with your local task queue.")]
 struct Opts {
     #[structopt(long = "verbose", help = "Add extra logging")]
     verbose: bool,

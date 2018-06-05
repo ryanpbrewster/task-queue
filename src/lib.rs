@@ -9,7 +9,6 @@ extern crate serde_json;
 use chrono::{DateTime, Utc};
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, Value, ValueRef};
 use rusqlite::{Connection, Error, Row};
-use std::collections::BTreeMap;
 use std::process::Command;
 
 pub struct TaskQueue {
@@ -29,6 +28,13 @@ impl Task {
             create_time     TEXT NOT NULL,
             command         TEXT NOT NULL
         )";
+    pub fn from_row(row: &Row) -> Result<Task, Error> {
+        Ok(Task {
+            id: row.get_checked(0)?,
+            create_time: row.get_checked(1)?,
+            command: row.get_checked(2)?,
+        })
+    }
 }
 
 pub struct TaskInput {
@@ -87,7 +93,8 @@ impl FromSql for InputState {
 
 impl TaskQueue {
     pub fn new() -> Result<TaskQueue, Error> {
-        let tq = Connection::open("file:rpb.sqlite").map(|conn| TaskQueue { conn })?;
+        // TODO(rpb): find a way to make this live at $HOME/.config/task-queue/tq.sqlite
+        let tq = Connection::open("file:tq.sqlite").map(|conn| TaskQueue { conn })?;
         tq.conn.execute(Task::INIT_STATEMENT, &[])?;
         tq.conn.execute(TaskInput::INIT_STATEMENT, &[])?;
         Ok(tq)
@@ -124,22 +131,8 @@ impl TaskQueue {
     }
 
     pub fn list_tasks(&mut self) -> Result<(), Error> {
-        let mut statement = self.conn.prepare(
-            "
-                 SELECT id, create_time, command,
-                 (SELECT COUNT(1) FROM inputs WHERE task_id = tasks.id)
-                 FROM tasks",
-        )?;
-        let mut query = statement.query(&[])?;
-        while let Some(Ok(row)) = query.next() {
-            let id: i64 = row.get(0);
-            let create_time: DateTime<Utc> = row.get(1);
-            let command: String = row.get(2);
-            let input_count: u32 = row.get(3);
-            println!(
-                "[{}] {} --- {} inputs --- {}",
-                id, create_time, input_count, command
-            );
+        for task in self.get_tasks()? {
+            println!("[{}] {} --- {}", task.id, task.create_time, task.command);
         }
         Ok(())
     }
@@ -207,6 +200,12 @@ impl TaskQueue {
             &[&InputState::Failed, &Utc::now(), &InputState::Started],
         )?;
         Ok(())
+    }
+
+    fn get_tasks(&mut self) -> Result<Vec<Task>, Error> {
+        let mut statement = self.conn.prepare("SELECT * FROM tasks")?;
+        let query = statement.query_map(&[], |row| Task::from_row(row).unwrap())?;
+        query.collect()
     }
 
     fn get_inputs(&mut self, task_id: i64) -> Result<Vec<TaskInput>, Error> {
