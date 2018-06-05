@@ -95,20 +95,24 @@ impl TaskQueue {
 
     pub fn push_task(&mut self, command: String, inputs: Vec<String>) -> Result<(), Error> {
         let now = Utc::now();
-        self.conn.execute(
+
+        let txn = self.conn.transaction()?;
+
+        txn.execute(
             "INSERT INTO tasks (create_time, command) VALUES (?1, ?2)",
             &[&now, &command],
         )?;
 
-        let task_id = self.conn.last_insert_rowid();
+        let task_id = txn.last_insert_rowid();
 
         for input in inputs {
-            self.conn.execute(
+            txn.execute(
                 "INSERT INTO INPUTS (task_id, value, state, updated_at) VALUES (?1, ?2, ?3, ?4)",
                 &[&task_id, &input, &InputState::New, &Utc::now()],
             )?;
         }
-        Ok(())
+
+        txn.commit()
     }
 
     pub fn remove_task(&mut self, task_id: i64) -> Result<(), Error> {
