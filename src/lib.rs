@@ -186,6 +186,25 @@ impl TaskQueue {
         Ok(())
     }
 
+    pub fn clean(&mut self) -> Result<(), Error> {
+        // Remove finished inputs.
+        self.conn.execute(
+            "DELETE FROM inputs WHERE state = ?1",
+            &[&InputState::Finished],
+        )?;
+        // Remove tasks with no inputs (possibly because they all finished and were just cleaned).
+        self.conn.execute(
+            "DELETE FROM tasks WHERE NOT EXISTS (SELECT 1 FROM inputs WHERE task_id = tasks.id)",
+            &[],
+        )?;
+        // Mark any in-progress inputs as failed.
+        self.conn.execute(
+            "UPDATE inputs SET state = ?1, updated_at = ?2 WHERE state = ?3",
+            &[&InputState::Failed, &Utc::now(), &InputState::Started],
+        )?;
+        Ok(())
+    }
+
     fn get_inputs(&mut self, task_id: i64) -> Result<Vec<TaskInput>, Error> {
         let mut statement = self.conn
             .prepare("SELECT * FROM inputs WHERE task_id = ?1")?;

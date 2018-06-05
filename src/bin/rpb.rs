@@ -19,6 +19,9 @@ struct Opts {
 
 #[derive(StructOpt, Debug)]
 enum Operation {
+    #[structopt(name = "clean")]
+    Clean,
+
     #[structopt(name = "create")]
     Create { command: String },
 
@@ -41,6 +44,9 @@ fn main() {
     let mut tq = TaskQueue::new().unwrap();
 
     match opts.op {
+        Operation::Clean => {
+            tq.clean().unwrap();
+        }
         Operation::Create { command } => {
             let stdin = std::io::stdin();
             let inputs: Vec<String> = stdin.lock().lines().collect::<Result<Vec<_>, _>>().unwrap();
