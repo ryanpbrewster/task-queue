@@ -149,18 +149,22 @@ impl TaskQueue {
 
         let inputs: Vec<TaskInput> = self.get_inputs(task_id)?;
         for input in inputs {
-            if input.state == InputState::Finished {
+            // Skip inputs that are already in progress or finished.
+            if input.state == InputState::Finished || input.state == InputState::Started {
                 continue;
             }
-            self.set_input_state(input.id, InputState::Started)?;
+            // Avoid race conditions: mark as started, only proceed if successful
+            if !self.set_input_state(input.id, input.state, InputState::Started)? {
+                continue;
+            }
             println!("starting: {} {}", command, input.value);
             let result = Command::new(&command).arg(&input.value).status().unwrap();
-            let state = if result.success() {
+            let new_state = if result.success() {
                 InputState::Finished
             } else {
                 InputState::Failed
             };
-            self.set_input_state(input.id, state)?;
+            self.set_input_state(input.id, InputState::Started, new_state)?;
         }
         Ok(())
     }
@@ -189,12 +193,26 @@ impl TaskQueue {
 
         query.collect()
     }
-    fn set_input_state(&mut self, input_id: i64, state: InputState) -> Result<(), Error> {
-        self.conn
-            .execute(
-                "UPDATE inputs SET state = ?1 WHERE id = ?2 LIMIT 1",
-                &[&state, &input_id],
-            )
-            .map(|_| ())
+
+    /** true iff the TaskInput row was actually mutated */
+    fn set_input_state(
+        &mut self,
+        input_id: i64,
+        expected_state: InputState,
+        new_state: InputState,
+    ) -> Result<bool, Error> {
+        let mutated_count = self.conn.execute(
+            "UPDATE inputs SET state = ?1 WHERE id = ?2 AND state = ?3 LIMIT 1",
+            &[&new_state, &input_id, &expected_state],
+        )?;
+        if mutated_count == 1 {
+            self.conn.execute(
+                "UPDATE inputs SET updated_at = ?1 WHERE id = ?2 LIMIT 1",
+                &[&Utc::now(), &input_id],
+            )?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
