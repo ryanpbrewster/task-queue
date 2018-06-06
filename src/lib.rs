@@ -9,6 +9,7 @@ extern crate serde_json;
 use chrono::{DateTime, Utc};
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, Value, ValueRef};
 use rusqlite::{Connection, Error, Row};
+use std::fmt::{Display, Formatter};
 use std::process::Command;
 
 pub struct TaskQueue {
@@ -91,6 +92,45 @@ impl FromSql for InputState {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct CommandTemplate(Vec<String>);
+impl CommandTemplate {
+    fn run(&self, arg: &str) -> bool {
+        Command::new(&(self.0)[0])
+            .args(&(self.0)[1..])
+            .arg(arg)
+            .status()
+            .unwrap()
+            .success()
+    }
+}
+
+impl Display for CommandTemplate {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), std::fmt::Error> {
+        for s in &self.0 {
+            write!(f, "{}", s)?;
+        }
+        Ok(())
+    }
+}
+
+impl ToSql for CommandTemplate {
+    fn to_sql(&self) -> Result<ToSqlOutput, Error> {
+        Ok(ToSqlOutput::Owned(Value::Text(
+            serde_json::to_string(self).unwrap(),
+        )))
+    }
+}
+
+impl FromSql for CommandTemplate {
+    fn column_result(value: ValueRef) -> Result<Self, FromSqlError> {
+        match value {
+            ValueRef::Text(ref txt) => Ok(serde_json::from_str(txt).unwrap()),
+            _ => Err(FromSqlError::InvalidType),
+        }
+    }
+}
+
 impl TaskQueue {
     pub fn new() -> Result<TaskQueue, Error> {
         // TODO(rpb): find a way to make this live at $HOME/.config/task-queue/tq.sqlite
@@ -100,14 +140,14 @@ impl TaskQueue {
         Ok(tq)
     }
 
-    pub fn push_task(&mut self, command: String, inputs: Vec<String>) -> Result<(), Error> {
+    pub fn push_task(&mut self, command: Vec<String>, inputs: Vec<String>) -> Result<(), Error> {
         let now = Utc::now();
 
         let txn = self.conn.transaction()?;
 
         txn.execute(
             "INSERT INTO tasks (create_time, command) VALUES (?1, ?2)",
-            &[&now, &command],
+            &[&now, &CommandTemplate(command)],
         )?;
 
         let task_id = txn.last_insert_rowid();
@@ -138,7 +178,7 @@ impl TaskQueue {
     }
 
     pub fn run_task(&mut self, task_id: i64) -> Result<(), Error> {
-        let command: String = self.conn.query_row(
+        let command: CommandTemplate = self.conn.query_row(
             "SELECT command FROM tasks WHERE id = ?1",
             &[&task_id],
             |row| row.get(0),
@@ -154,9 +194,7 @@ impl TaskQueue {
             if !self.set_input_state(input.id, input.state, InputState::Started)? {
                 continue;
             }
-            println!("starting: {} {}", command, input.value);
-            let result = Command::new(&command).arg(&input.value).status().unwrap();
-            let new_state = if result.success() {
+            let new_state = if command.run(&input.value) {
                 InputState::Finished
             } else {
                 InputState::Failed
@@ -167,13 +205,13 @@ impl TaskQueue {
     }
 
     pub fn show_task(&mut self, task_id: i64) -> Result<(), Error> {
-        let command: String = self.conn.query_row(
+        let command: CommandTemplate = self.conn.query_row(
             "SELECT command FROM tasks WHERE id = ?1",
             &[&task_id],
             |row| row.get(0),
         )?;
 
-        println!("{}", command);
+        println!("{:?}", command);
 
         let inputs = self.get_inputs(task_id)?;
         for input in inputs {

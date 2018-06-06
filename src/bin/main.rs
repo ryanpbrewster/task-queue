@@ -5,6 +5,7 @@ extern crate task_queue;
 use task_queue::TaskQueue;
 
 use std::io::BufRead;
+use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -23,7 +24,8 @@ enum Operation {
     Clean,
 
     #[structopt(name = "create")]
-    Create { command: String },
+    #[structopt(raw(settings = "&[AppSettings::TrailingVarArg]"))]
+    Create { command: Vec<String> },
 
     #[structopt(name = "delete")]
     Delete { task_ids: Vec<i64> },
