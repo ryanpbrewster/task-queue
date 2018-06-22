@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, Value, ValueRef};
 use rusqlite::{Connection, Error, Row};
 use std::fmt::{Display, Formatter};
+use std::path::PathBuf;
 use std::process::Command;
 
 pub struct TaskQueue {
@@ -133,11 +134,30 @@ impl FromSql for CommandTemplate {
 
 impl TaskQueue {
     pub fn new() -> Result<TaskQueue, Error> {
-        // TODO(rpb): find a way to make this live at $HOME/.config/task-queue/tq.sqlite
-        let tq = Connection::open("file:tq.sqlite").map(|conn| TaskQueue { conn })?;
-        tq.conn.execute(Task::INIT_STATEMENT, &[])?;
-        tq.conn.execute(TaskInput::INIT_STATEMENT, &[])?;
-        Ok(tq)
+        let location = TaskQueue::init_sqlite_file();
+        let conn = Connection::open(&location)?;
+        conn.execute(Task::INIT_STATEMENT, &[])?;
+        conn.execute(TaskInput::INIT_STATEMENT, &[])?;
+        Ok(TaskQueue { conn })
+    }
+
+    // Create a .sqlite file and return its location.
+    // By convention this is at $HOME/.config/task-queue/tq.sqlite
+    fn init_sqlite_file() -> PathBuf {
+        let home = std::env::home_dir().expect("$HOME not defined");
+        let dir = {
+            let mut path = home.clone();
+            path.push(".config");
+            path.push("task-queue");
+            path
+        };
+        std::fs::create_dir_all(&dir).unwrap();
+        let location = {
+            let mut path = dir;
+            path.push("tq.sqlite");
+            path
+        };
+        location
     }
 
     pub fn push_task(&mut self, command: Vec<String>, inputs: Vec<String>) -> Result<(), Error> {
@@ -247,7 +267,8 @@ impl TaskQueue {
     }
 
     fn get_inputs(&mut self, task_id: i64) -> Result<Vec<TaskInput>, Error> {
-        let mut statement = self.conn
+        let mut statement = self
+            .conn
             .prepare("SELECT * FROM inputs WHERE task_id = ?1")?;
         let query = statement.query_map(&[&task_id], |row| TaskInput::from_row(row).unwrap())?;
 
@@ -262,12 +283,12 @@ impl TaskQueue {
         new_state: InputState,
     ) -> Result<bool, Error> {
         let mutated_count = self.conn.execute(
-            "UPDATE inputs SET state = ?1 WHERE id = ?2 AND state = ?3 LIMIT 1",
+            "UPDATE inputs SET state = ?1 WHERE id = ?2 AND state = ?3",
             &[&new_state, &input_id, &expected_state],
         )?;
         if mutated_count == 1 {
             self.conn.execute(
-                "UPDATE inputs SET updated_at = ?1 WHERE id = ?2 LIMIT 1",
+                "UPDATE inputs SET updated_at = ?1 WHERE id = ?2",
                 &[&Utc::now(), &input_id],
             )?;
             Ok(true)

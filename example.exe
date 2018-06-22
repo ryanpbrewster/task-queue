@@ -1,8 +1,9 @@
 #!/bin/bash
 
-sleep 0.1
+echo $1
+sleep $1
 
 if [[ ${RANDOM} -gt 30000 ]]; then
-  echo failure
-  exit 1;
+  echo "!!!"
+  exit 1
 fi
