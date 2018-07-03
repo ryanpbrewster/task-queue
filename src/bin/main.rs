@@ -34,7 +34,11 @@ enum Operation {
     List,
 
     #[structopt(name = "run")]
-    Run { task_id: i64 },
+    Run {
+        task_id: i64,
+        #[structopt(long = "concurrency", help = "How many tasks to run in parallel")]
+        concurrency: usize,
+    },
 
     #[structopt(name = "show")]
     Show { task_id: i64 },
@@ -62,8 +66,11 @@ fn main() {
         Operation::List => {
             tq.list_tasks().unwrap();
         }
-        Operation::Run { task_id } => {
-            tq.run_task(task_id).unwrap();
+        Operation::Run {
+            task_id,
+            concurrency,
+        } => {
+            tq.run_task(task_id, concurrency).unwrap();
         }
         Operation::Show { task_id } => {
             tq.show_task(task_id).unwrap();

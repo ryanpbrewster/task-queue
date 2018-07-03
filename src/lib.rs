@@ -1,17 +1,19 @@
 extern crate chrono;
+extern crate rayon;
 extern crate rusqlite;
-
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
 
 use chrono::{DateTime, Utc};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, Value, ValueRef};
 use rusqlite::{Connection, Error, Row};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 pub struct TaskQueue {
     conn: Connection,
@@ -197,34 +199,55 @@ impl TaskQueue {
         Ok(())
     }
 
-    pub fn run_task(&mut self, task_id: i64) -> Result<(), Error> {
+    pub fn run_task(&mut self, task_id: i64, concurrency: usize) -> Result<(), Error> {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(concurrency)
+            .build_global()
+            .unwrap();
+
         let command: CommandTemplate = self.conn.query_row(
             "SELECT command FROM tasks WHERE id = ?1",
             &[&task_id],
             |row| row.get(0),
         )?;
 
+        let handle = Arc::new(Mutex::new(self));
         for i in 0.. {
-            let inputs: Vec<TaskInput> = self.get_inputs(task_id, 100 * i, 100)?;
+            let inputs: Vec<TaskInput> = {
+                let mut handle_mut = handle.lock().unwrap();
+                handle_mut.get_inputs(task_id, 100 * i, 100)?
+            };
             if inputs.is_empty() {
                 break;
             }
-            for input in inputs {
+
+            inputs.into_par_iter().for_each(|input| {
                 // Skip inputs that are already in progress or finished.
                 if input.state == InputState::Finished || input.state == InputState::Started {
-                    continue;
+                    return;
                 }
                 // Avoid race conditions: mark as started, only proceed if successful
-                if !self.set_input_state(input.id, input.state, InputState::Started)? {
-                    continue;
+                {
+                    let mut handle_mut = handle.lock().unwrap();
+                    if !handle_mut
+                        .set_input_state(input.id, input.state, InputState::Started)
+                        .unwrap_or(false)
+                    {
+                        return;
+                    }
                 }
                 let new_state = if command.run(&input.value) {
                     InputState::Finished
                 } else {
                     InputState::Failed
                 };
-                self.set_input_state(input.id, InputState::Started, new_state)?;
-            }
+                {
+                    let mut handle_mut = handle.lock().unwrap();
+                    handle_mut
+                        .set_input_state(input.id, InputState::Started, new_state)
+                        .unwrap();
+                }
+            });
         }
         Ok(())
     }

@@ -2,8 +2,3 @@
 
 echo $1
 sleep $1
-
-if [[ ${RANDOM} -gt 30000 ]]; then
-  echo "!!!"
-  exit 1
-fi
