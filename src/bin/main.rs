@@ -36,7 +36,9 @@ enum Operation {
     #[structopt(name = "run")]
     Run {
         task_id: i64,
-        #[structopt(long = "concurrency", help = "How many tasks to run in parallel")]
+        #[structopt(
+            long = "concurrency", help = "How many tasks to run in parallel", default_value = "1"
+        )]
         concurrency: usize,
     },
 
