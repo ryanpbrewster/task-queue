@@ -204,22 +204,27 @@ impl TaskQueue {
             |row| row.get(0),
         )?;
 
-        let inputs: Vec<TaskInput> = self.get_inputs(task_id)?;
-        for input in inputs {
-            // Skip inputs that are already in progress or finished.
-            if input.state == InputState::Finished || input.state == InputState::Started {
-                continue;
+        for i in 0.. {
+            let inputs: Vec<TaskInput> = self.get_inputs(task_id, 100 * i, 100)?;
+            if inputs.is_empty() {
+                break;
             }
-            // Avoid race conditions: mark as started, only proceed if successful
-            if !self.set_input_state(input.id, input.state, InputState::Started)? {
-                continue;
+            for input in inputs {
+                // Skip inputs that are already in progress or finished.
+                if input.state == InputState::Finished || input.state == InputState::Started {
+                    continue;
+                }
+                // Avoid race conditions: mark as started, only proceed if successful
+                if !self.set_input_state(input.id, input.state, InputState::Started)? {
+                    continue;
+                }
+                let new_state = if command.run(&input.value) {
+                    InputState::Finished
+                } else {
+                    InputState::Failed
+                };
+                self.set_input_state(input.id, InputState::Started, new_state)?;
             }
-            let new_state = if command.run(&input.value) {
-                InputState::Finished
-            } else {
-                InputState::Failed
-            };
-            self.set_input_state(input.id, InputState::Started, new_state)?;
         }
         Ok(())
     }
@@ -233,9 +238,14 @@ impl TaskQueue {
 
         println!("{:?}", command);
 
-        let inputs = self.get_inputs(task_id)?;
-        for input in inputs {
-            println!("  [{:?}] {}", input.state, input.value);
+        for i in 0.. {
+            let inputs = self.get_inputs(task_id, 100 * i, 100)?;
+            if inputs.is_empty() {
+                break;
+            }
+            for input in inputs {
+                println!("  [{:?}] {}", input.state, input.value);
+            }
         }
 
         Ok(())
@@ -257,6 +267,8 @@ impl TaskQueue {
             "UPDATE inputs SET state = ?1, updated_at = ?2 WHERE state = ?3",
             &[&InputState::Failed, &Utc::now(), &InputState::Started],
         )?;
+        // Reclaim any space that has been freed up.
+        self.conn.execute("VACUUM", &[])?;
         Ok(())
     }
 
@@ -266,11 +278,18 @@ impl TaskQueue {
         query.collect()
     }
 
-    fn get_inputs(&mut self, task_id: i64) -> Result<Vec<TaskInput>, Error> {
+    fn get_inputs(
+        &mut self,
+        task_id: i64,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<TaskInput>, Error> {
         let mut statement = self
             .conn
-            .prepare("SELECT * FROM inputs WHERE task_id = ?1")?;
-        let query = statement.query_map(&[&task_id], |row| TaskInput::from_row(row).unwrap())?;
+            .prepare("SELECT * FROM inputs WHERE task_id = ? LIMIT ?, ?")?;
+        let query = statement.query_map(&[&task_id, &offset, &limit], |row| {
+            TaskInput::from_row(row).unwrap()
+        })?;
 
         query.collect()
     }
