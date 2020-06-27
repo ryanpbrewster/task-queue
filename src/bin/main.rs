@@ -1,11 +1,6 @@
-#[macro_use]
-extern crate structopt;
-extern crate task_queue;
-
 use task_queue::TaskQueue;
 
 use std::io::BufRead;
-use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -24,7 +19,6 @@ enum Operation {
     Clean,
 
     #[structopt(name = "create")]
-    #[structopt(raw(settings = "&[AppSettings::TrailingVarArg]"))]
     Create { command: Vec<String> },
 
     #[structopt(name = "delete")]
@@ -37,7 +31,9 @@ enum Operation {
     Run {
         task_id: i64,
         #[structopt(
-            long = "concurrency", help = "How many tasks to run in parallel", default_value = "1"
+            long = "concurrency",
+            help = "How many tasks to run in parallel",
+            default_value = "1"
         )]
         concurrency: usize,
     },

@@ -1,15 +1,8 @@
-extern crate chrono;
-extern crate rayon;
-extern crate rusqlite;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-
 use chrono::{DateTime, Utc};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rusqlite::types::{FromSql, FromSqlError, ToSql, ToSqlOutput, Value, ValueRef};
-use rusqlite::{Connection, Error, Row};
+use rusqlite::{params, Connection, Error, Row};
+use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::process::Command;
@@ -34,13 +27,14 @@ impl Task {
         )";
     pub fn from_row(row: &Row) -> Result<Task, Error> {
         Ok(Task {
-            id: row.get_checked(0)?,
-            create_time: row.get_checked(1)?,
-            command: row.get_checked(2)?,
+            id: row.get(0)?,
+            create_time: row.get(1)?,
+            command: row.get(2)?,
         })
     }
 }
 
+#[allow(dead_code)]
 pub struct TaskInput {
     id: i64,
     task_id: i64,
@@ -60,11 +54,11 @@ impl TaskInput {
         )";
     pub fn from_row(row: &Row) -> Result<TaskInput, Error> {
         Ok(TaskInput {
-            id: row.get_checked(0)?,
-            task_id: row.get_checked(1)?,
-            value: row.get_checked(2)?,
-            state: row.get_checked(3)?,
-            updated_at: row.get_checked(4)?,
+            id: row.get(0)?,
+            task_id: row.get(1)?,
+            value: row.get(2)?,
+            state: row.get(3)?,
+            updated_at: row.get(4)?,
         })
     }
 }
@@ -89,7 +83,7 @@ impl ToSql for InputState {
 impl FromSql for InputState {
     fn column_result(value: ValueRef) -> Result<Self, FromSqlError> {
         match value {
-            ValueRef::Text(ref txt) => Ok(serde_json::from_str(txt).unwrap()),
+            ValueRef::Text(txt) => Ok(serde_json::from_slice(txt).unwrap()),
             _ => Err(FromSqlError::InvalidType),
         }
     }
@@ -128,7 +122,7 @@ impl ToSql for CommandTemplate {
 impl FromSql for CommandTemplate {
     fn column_result(value: ValueRef) -> Result<Self, FromSqlError> {
         match value {
-            ValueRef::Text(ref txt) => Ok(serde_json::from_str(txt).unwrap()),
+            ValueRef::Text(txt) => Ok(serde_json::from_slice(txt).unwrap()),
             _ => Err(FromSqlError::InvalidType),
         }
     }
@@ -138,15 +132,15 @@ impl TaskQueue {
     pub fn new() -> Result<TaskQueue, Error> {
         let location = TaskQueue::init_sqlite_file();
         let conn = Connection::open(&location)?;
-        conn.execute(Task::INIT_STATEMENT, &[])?;
-        conn.execute(TaskInput::INIT_STATEMENT, &[])?;
+        conn.execute(Task::INIT_STATEMENT, params![])?;
+        conn.execute(TaskInput::INIT_STATEMENT, params![])?;
         Ok(TaskQueue { conn })
     }
 
     // Create a .sqlite file and return its location.
     // By convention this is at $HOME/.config/task-queue/tq.sqlite
     fn init_sqlite_file() -> PathBuf {
-        let home = std::env::home_dir().expect("$HOME not defined");
+        let home = dirs::home_dir().expect("$HOME not defined");
         let dir = {
             let mut path = home.clone();
             path.push(".config");
@@ -169,7 +163,7 @@ impl TaskQueue {
 
         txn.execute(
             "INSERT INTO tasks (create_time, command) VALUES (?1, ?2)",
-            &[&now, &CommandTemplate(command)],
+            params![&now, &CommandTemplate(command)],
         )?;
 
         let task_id = txn.last_insert_rowid();
@@ -177,7 +171,7 @@ impl TaskQueue {
         for input in inputs {
             txn.execute(
                 "INSERT INTO INPUTS (task_id, value, state, updated_at) VALUES (?1, ?2, ?3, ?4)",
-                &[&task_id, &input, &InputState::New, &Utc::now()],
+                params![&task_id, &input, &InputState::New, &Utc::now()],
             )?;
         }
 
@@ -207,7 +201,7 @@ impl TaskQueue {
 
         let command: CommandTemplate = self.conn.query_row(
             "SELECT command FROM tasks WHERE id = ?1",
-            &[&task_id],
+            params![&task_id],
             |row| row.get(0),
         )?;
 
@@ -283,21 +277,21 @@ impl TaskQueue {
         // Remove tasks with no inputs (possibly because they all finished and were just cleaned).
         self.conn.execute(
             "DELETE FROM tasks WHERE NOT EXISTS (SELECT 1 FROM inputs WHERE task_id = tasks.id)",
-            &[],
+            params![],
         )?;
         // Mark any in-progress inputs as failed.
         self.conn.execute(
             "UPDATE inputs SET state = ?1, updated_at = ?2 WHERE state = ?3",
-            &[&InputState::Failed, &Utc::now(), &InputState::Started],
+            params![&InputState::Failed, &Utc::now(), &InputState::Started],
         )?;
         // Reclaim any space that has been freed up.
-        self.conn.execute("VACUUM", &[])?;
+        self.conn.execute("VACUUM", params![])?;
         Ok(())
     }
 
     fn get_tasks(&mut self) -> Result<Vec<Task>, Error> {
         let mut statement = self.conn.prepare("SELECT * FROM tasks")?;
-        let query = statement.query_map(&[], |row| Task::from_row(row).unwrap())?;
+        let query = statement.query_map(params![], |row| Task::from_row(row))?;
         query.collect()
     }
 
@@ -309,9 +303,9 @@ impl TaskQueue {
     ) -> Result<Vec<TaskInput>, Error> {
         let mut statement = self
             .conn
-            .prepare("SELECT * FROM inputs WHERE task_id = ? LIMIT ?, ?")?;
-        let query = statement.query_map(&[&task_id, &offset, &limit], |row| {
-            TaskInput::from_row(row).unwrap()
+            .prepare("SELECT * FROM inputs WHERE task_id = ? ORDER BY id LIMIT ?, ?")?;
+        let query = statement.query_map(params![&task_id, &offset, &limit], |row| {
+            TaskInput::from_row(row)
         })?;
 
         query.collect()
@@ -326,12 +320,12 @@ impl TaskQueue {
     ) -> Result<bool, Error> {
         let mutated_count = self.conn.execute(
             "UPDATE inputs SET state = ?1 WHERE id = ?2 AND state = ?3",
-            &[&new_state, &input_id, &expected_state],
+            params![&new_state, &input_id, &expected_state],
         )?;
         if mutated_count == 1 {
             self.conn.execute(
                 "UPDATE inputs SET updated_at = ?1 WHERE id = ?2",
-                &[&Utc::now(), &input_id],
+                params![&Utc::now(), &input_id],
             )?;
             Ok(true)
         } else {
